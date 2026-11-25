@@ -1,22 +1,25 @@
 # Aspose.Imaging FOSS for Python
 
-Порт библиотеки Aspose.Imaging.Foss на Python 3.10+. Для работы достаточно стандартной библиотеки Python. Исходная версия C# для сравнения — коммит `0f8899ff8372f6fd5b0d374a1c6b532b7c4cf92f`.
+Aspose.Imaging FOSS identifies image formats and reads image metadata from files, byte buffers, and binary streams. It runs on Python 3.10 or later and uses only the standard library. The reference for this port is commit `0f8899ff8372f6fd5b0d374a1c6b532b7c4cf92f` of the Aspose.Imaging.Foss C# library.
 
-## Что уже работает
+## Format detection and metadata
 
-`detect_format()` распознаёт PNG (включая APNG), JPEG, GIF, BMP, WebP, ICO, TIFF, PSD, EMF, WMF, DICOM, DjVu, AVIF и HEIC.
+Use `detect_format()` to identify an image from its signature. It reads up to 132 bytes and returns `ImageFormat.UNKNOWN` for an unrecognized signature. Use `probe()` to retrieve the format and available metadata. It reads beyond the signature when needed. If a header is truncated, the result keeps the detected format and any metadata already read. Unavailable fields are `None`.
 
-`probe()` возвращает размеры, битовую глубину и число кадров, когда соответствующие поля доступны. Для PNG, JPEG, BMP и PSD библиотека читает битовую глубину из заголовка. Для APNG она берёт число кадров из блока `acTL` перед первым `IDAT`. Размеры EMF вычисляются по включительным границам прямоугольника, а размеры placeable WMF пересчитываются в пиксели при 96 DPI. Для стандартного WMF доступен только формат.
+| Format | Metadata returned by `probe()` |
+| --- | --- |
+| PNG, APNG | Image dimensions and bit depth from the header. For APNG, the frame count comes from the `acTL` chunk before the first `IDAT` chunk. |
+| JPEG, BMP, PSD | Image dimensions and bit depth from the header. |
+| GIF, WebP | Canvas dimensions and frame count. |
+| ICO | Dimensions and bit depth of the first image, plus the number of images in the icon directory. |
+| TIFF | Dimensions of the first page, bit depth per channel, and the number of pages in the image file directory (IFD) chain. |
+| EMF | Pixel dimensions calculated from the inclusive bounding rectangle. |
+| WMF | Pixel dimensions at 96 DPI for placeable WMF files. Standard WMF headers provide format identification only. |
+| DICOM | Width from `Columns`, height from `Rows`, and bit depth from `BitsAllocated`. The reader supports Implicit VR Little Endian, Explicit VR Little Endian, and Explicit VR Big Endian, including metadata preceding JPEG-compressed pixel data. It stops at `PixelData` or an element with undefined length. |
+| DjVu | Page dimensions and the number of embedded pages in a complete bundled DJVM document. The page count is `None` when pages are stored in external files. |
+| AVIF, HEIC | Primary image dimensions from the `ispe` property, using `pitm` to identify the primary item and `ipma` to find its properties. If the association is unavailable, the reader uses the `ispe` with the largest area. As in the C# library, these dimensions precede any `clap` cropping. |
 
-Для GIF и WebP библиотека читает размер холста и считает кадры. Для ICO она возвращает размеры и битовую глубину первого изображения, а также число изображений в каталоге. Для TIFF доступны размеры первой страницы, глубина одного канала и число страниц в цепочке каталогов IFD. Для DjVu библиотека читает размеры страницы и считает встроенные страницы в полном документе DJVM. Для документа со страницами во внешних файлах число страниц равно `None`.
-
-Для DICOM библиотека возвращает ширину из поля `Columns`, высоту из `Rows` и битовую глубину из `BitsAllocated`. Она читает заголовки Implicit VR Little Endian, Explicit VR Little Endian и Explicit VR Big Endian, в том числе метаданные перед сжатыми пикселями JPEG. Чтение останавливается у `PixelData` или элемента неопределённой длины.
-
-Для AVIF и HEIC библиотека находит размеры основного изображения по идентификатору `pitm` и связям `ipma` со свойством `ispe`. Если связь недоступна, выбираются размеры наибольшего по площади изображения среди доступных свойств `ispe`. Как и в C#-версии, это размеры до применения кадрирования `clap`.
-
-При усечённом заголовке библиотека сохраняет распознанный формат и прочитанные поля. Недоступные значения равны `None`. Для неизвестной сигнатуры возвращается `ImageFormat.UNKNOWN`.
-
-Обе функции принимают путь, байтовый буфер или двоичный поток. Для распознавания достаточно первых 132 байтов. Для получения метаданных функция `probe()` при необходимости продолжает чтение за этой границей. Для TIFF, DjVu, AVIF и HEIC из потока без перемотки данные буферизуются, при размере более 1 МиБ используется временный файл. Чтение потока с перемоткой начинается с начала, а потока без перемотки — с текущей позиции. Поток вызывающей стороны остаётся открытым.
+Both functions accept a path, a byte buffer, or a binary stream. They read seekable streams from the beginning and non-seekable streams from the current position. Caller-provided streams stay open. When probing TIFF, DjVu, AVIF, or HEIC from a non-seekable stream, the reader buffers the input and uses a temporary file if it exceeds 1 MiB.
 
 ```python
 from aspose_imaging_foss import ImageFormat, detect_format, probe
@@ -27,19 +30,19 @@ info = probe("drawing.emf")
 print(info.width, info.height, info.frame_count)
 ```
 
-## Установка и проверка
+## Installation and testing
 
-Из корня проекта в виртуальном окружении выполните:
+From the project root, run these commands in a virtual environment.
 
 ```sh
 python -m pip install .
 python -m unittest discover -s tests -v
 ```
 
-## Этапы портирования
+## Porting progress
 
-1. **Готово.** Упаковать библиотеку, перенести модель результата, распознавание 14 форматов и обработчик EMF. Проверить пути, буферы, короткие чтения и потоки без перемотки.
-2. **Готово.** Перенесены метаданные PNG/APNG, JPEG, BMP, PSD и WMF. Проверены варианты заголовков, число кадров APNG и чтение за пределами первых 132 байтов.
-3. **Готово.** Перенесены метаданные GIF, WebP, ICO, TIFF и DjVu. Размеры, битовая глубина и счётчики кадров, изображений и страниц сверены с C#.
-4. **Готово.** Перенесено чтение метаданных DICOM, AVIF и HEIC. Проверены варианты порядка байтов DICOM и выбор основного изображения в AVIF/HEIC.
-5. **Асинхронное чтение и итоговая сверка.** Перенести асинхронный API и отмену операций. Сравнить все поля обеих версий на общем наборе обычных, усечённых и повреждённых входных данных. Проверить установку собранного пакета.
+1. **Complete — package and format detection.** Ported the result model, detection for all 14 formats, and the EMF metadata reader. Verified paths, byte buffers, short reads, and non-seekable streams.
+2. **Complete — raster formats and WMF.** Ported metadata readers for PNG/APNG, JPEG, BMP, PSD, and WMF. Verified header variants, APNG frame counts, and reads beyond the first 132 bytes.
+3. **Complete — animation and multipage images.** Ported GIF, WebP, ICO, TIFF, and DjVu. Verified dimensions, bit depth, and frame, image, and page counts against the C# library.
+4. **Complete — DICOM, AVIF, and HEIC.** Ported metadata readers for all three formats. Verified DICOM byte ordering and primary image selection in AVIF and HEIC.
+5. **Planned — asynchronous reading and final verification.** Port the asynchronous API and cancellation support. Compare all result fields against the C# library using the same valid, truncated, and malformed inputs. Verify installation of the built package.
