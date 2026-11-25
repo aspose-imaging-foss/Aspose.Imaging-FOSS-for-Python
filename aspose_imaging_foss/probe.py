@@ -1,3 +1,5 @@
+import asyncio
+from contextlib import ExitStack
 from os import PathLike
 from struct import unpack_from
 from typing import BinaryIO
@@ -7,7 +9,7 @@ from ._dicom import dicom
 from ._djvu import djvu
 from ._heif import heif
 from ._tiff import tiff
-from ._reader import HeaderReader, offset_reader, read_up_to
+from ._reader import AsyncReadable, HeaderReader, ProbeIO, Stream, offset_reader, run_inline
 from .model import ImageFormat, ImageInfo
 
 
@@ -17,10 +19,10 @@ _AVIF_BRANDS = {b"avif", b"avis"}
 _HEIC_BRANDS = {b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"hevm", b"hevs"}
 
 
-def _read_prefix(stream: BinaryIO) -> bytes:
-    if stream.seekable():
-        stream.seek(0)
-    return read_up_to(stream, _HEADER_SIZE)
+async def _read_prefix(stream: Stream, io: ProbeIO) -> bytes:
+    if await io.seekable(stream):
+        await io.call(stream.seek, 0)
+    return await io.read_up_to(stream, _HEADER_SIZE)
 
 
 def _byte_view(source: bytes | bytearray | memoryview) -> memoryview:
@@ -35,8 +37,8 @@ def _header(source: Source) -> bytes:
         return bytes(_byte_view(source)[:_HEADER_SIZE])
     if isinstance(source, (str, PathLike)):
         with open(source, "rb") as stream:
-            return _read_prefix(stream)
-    return _read_prefix(source)
+            return run_inline(_read_prefix(stream, ProbeIO(False)))
+    return run_inline(_read_prefix(source, ProbeIO(False)))
 
 
 def _file_type(header: bytes) -> ImageFormat:
@@ -116,30 +118,56 @@ _SEQUENTIAL_HEADERS = {
 _OFFSET_HEADERS = {ImageFormat.TIFF: tiff, ImageFormat.DJVU: djvu}
 
 
-def _probe(buffered: memoryview, stream: BinaryIO | None = None) -> ImageInfo:
+async def _probe(buffered: memoryview, stream: Stream | None, io: ProbeIO) -> ImageInfo:
     header = bytes(buffered[:_HEADER_SIZE])
     image_format = _identify(header)
     sequential = _SEQUENTIAL_HEADERS.get(image_format)
     if sequential is not None:
-        return sequential(HeaderReader(buffered, stream))
+        return await sequential(HeaderReader(buffered, stream, io))
     if image_format in (ImageFormat.AVIF, ImageFormat.HEIC):
-        with offset_reader(buffered, stream) as reader:
-            return heif(reader, image_format)
+        async with offset_reader(buffered, stream, io) as reader:
+            return await heif(reader, image_format)
     by_offset = _OFFSET_HEADERS.get(image_format)
     if by_offset is not None:
-        with offset_reader(buffered, stream) as reader:
-            return by_offset(reader)
+        async with offset_reader(buffered, stream, io) as reader:
+            return await by_offset(reader)
     handler = _FIXED_HEADERS.get(image_format)
     if handler is not None:
         return handler(header)
     return ImageInfo(image_format)
 
 
+async def _probe_stream(stream: Stream, io: ProbeIO) -> ImageInfo:
+    prefix = await _read_prefix(stream, io)
+    return await _probe(memoryview(prefix), stream, io)
+
+
+async def _probe_source(source: Source | AsyncReadable, io: ProbeIO) -> ImageInfo:
+    if isinstance(source, (bytes, bytearray, memoryview)):
+        return await _probe(_byte_view(source), None, io)
+    if isinstance(source, (str, PathLike)):
+        files = ExitStack()
+
+        def open_source():
+            # Establish ownership before a cancelled caller can lose the open result.
+            return files.enter_context(open(source, "rb"))
+
+        try:
+            stream = await io.call(open_source)
+            return await _probe_stream(stream, io)
+        finally:
+            await io.call(files.close)
+    return await _probe_stream(source, io)
+
+
 def probe(source: Source) -> ImageInfo:
     """Identify the image format and read its supported header metadata."""
-    if isinstance(source, (bytes, bytearray, memoryview)):
-        return _probe(_byte_view(source))
-    if isinstance(source, (str, PathLike)):
-        with open(source, "rb") as stream:
-            return _probe(memoryview(_read_prefix(stream)), stream)
-    return _probe(memoryview(_read_prefix(source)), source)
+    return run_inline(_probe_source(source, ProbeIO(False)))
+
+
+async def probe_async(source: Source | AsyncReadable) -> ImageInfo:
+    """Probe a path, buffer, or stream. Cancel the awaiting task to stop the probe."""
+    await asyncio.sleep(0)  # Observe pending cancellation before opening or seeking.
+    result = await _probe_source(source, ProbeIO(True))
+    await asyncio.sleep(0)  # Deliver cancellation requested during the final read.
+    return result

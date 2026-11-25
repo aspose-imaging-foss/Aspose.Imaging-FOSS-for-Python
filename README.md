@@ -30,6 +30,23 @@ info = probe("drawing.emf")
 print(info.width, info.height, info.frame_count)
 ```
 
+## Asynchronous probing
+
+Use `await probe_async(source)` in an asyncio application. It accepts the same inputs as `probe()` and also accepts streams with an asynchronous `read(size)` method, including `asyncio.StreamReader`. The result is the same `ImageInfo` object type. Seekable async streams can provide `seek()` and `tell()` as regular or async methods.
+
+```python
+import asyncio
+from aspose_imaging_foss import probe_async
+
+async def main():
+    info = await probe_async("drawing.emf")
+    print(info.width, info.height)
+
+asyncio.run(main())
+```
+
+To cancel a probe, call `cancel()` on its asyncio task and await the task to receive `asyncio.CancelledError`. Cancellation interrupts an asynchronous read. Regular file operations run in a worker thread. If a blocking stream operation has already started, cancellation waits for that operation to finish before returning the stream to its caller.
+
 ## Installation and testing
 
 From the project root, run these commands in a virtual environment.
@@ -45,4 +62,4 @@ python -m unittest discover -s tests -v
 2. **Complete — raster formats and WMF.** Ported metadata readers for PNG/APNG, JPEG, BMP, PSD, and WMF. Verified header variants, APNG frame counts, and reads beyond the first 132 bytes.
 3. **Complete — animation and multipage images.** Ported GIF, WebP, ICO, TIFF, and DjVu. Verified dimensions, bit depth, and frame, image, and page counts against the C# library.
 4. **Complete — DICOM, AVIF, and HEIC.** Ported metadata readers for all three formats. Verified DICOM byte ordering and primary image selection in AVIF and HEIC.
-5. **Planned — asynchronous reading and final verification.** Port the asynchronous API and cancellation support. Compare all result fields against the C# library using the same valid, truncated, and malformed inputs. Verify installation of the built package.
+5. **Complete — asynchronous reading and final verification.** Added `probe_async()` and asyncio task cancellation. Verified all metadata fields against the C# library across all 14 formats using valid, truncated, and malformed inputs. Tested the installed wheel in clean virtual environments.

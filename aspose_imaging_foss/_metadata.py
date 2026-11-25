@@ -47,19 +47,19 @@ def wmf(header: bytes) -> ImageInfo:
     return ImageInfo(ImageFormat.WMF, _positive(width), _positive(height), frame_count=1)
 
 
-def png(reader: HeaderReader) -> ImageInfo:
-    reader.skip(8)
-    ihdr = reader.read(17)
+async def png(reader: HeaderReader) -> ImageInfo:
+    await reader.skip(8)
+    ihdr = await reader.read(17)
     if len(ihdr) < 17 or ihdr[:8] != b"\x00\x00\x00\x0dIHDR":
         return ImageInfo(ImageFormat.PNG)
     width, height, depth = unpack_from(">IIB", ihdr, 8)
-    frames = _png_frames(reader)
+    frames = await _png_frames(reader)
     return ImageInfo(ImageFormat.PNG, _positive(width), _positive(height), _positive(depth), frames)
 
 
-def _png_frames(reader: HeaderReader) -> int | None:
-    reader.skip(8)  # Remaining IHDR fields and CRC.
-    while len(chunk := reader.read(8)) == 8:
+async def _png_frames(reader: HeaderReader) -> int | None:
+    await reader.skip(8)  # Remaining IHDR fields and CRC.
+    while len(chunk := await reader.read(8)) == 8:
         size, kind = unpack(">I4s", chunk)
         if kind == b"IDAT":
             return 1
@@ -67,43 +67,43 @@ def _png_frames(reader: HeaderReader) -> int | None:
             break
         if kind == b"acTL":
             if size == 8:
-                data = reader.read(12)  # Frame count, play count and CRC must all be present.
+                data = await reader.read(12)  # Frame count, play count and CRC must all be present.
                 if len(data) == 12:
                     return _positive(unpack_from(">I", data)[0])
             break
-        if not reader.skip(size + 4):
+        if not await reader.skip(size + 4):
             break
     return None
 
 
-def jpeg(reader: HeaderReader) -> ImageInfo:
-    reader.skip(2)
+async def jpeg(reader: HeaderReader) -> ImageInfo:
+    await reader.skip(2)
     while True:
-        byte = reader.read(1)
+        byte = await reader.read(1)
         if not byte:
             break
         if byte != b"\xff":
             continue
-        while (byte := reader.read(1)) == b"\xff":
+        while (byte := await reader.read(1)) == b"\xff":
             pass
         if not byte:
             break
         marker = byte[0]
         if marker == 0x01 or 0xd0 <= marker <= 0xd9:
             continue
-        length = reader.read(2)
+        length = await reader.read(2)
         if len(length) < 2:
             break
         size = int.from_bytes(length, "big")
         if size < 2 or marker == 0xda:
             break
         if 0xc0 <= marker <= 0xcf and marker not in (0xc4, 0xc8, 0xcc):
-            frame = reader.read(5)
+            frame = await reader.read(5)
             if len(frame) == 5:
                 depth, height, width = unpack(">BHH", frame)
                 return ImageInfo(ImageFormat.JPEG, _positive(width), _positive(height), _positive(depth), 1)
             break
-        if not reader.skip(size - 2):
+        if not await reader.skip(size - 2):
             break
     return ImageInfo(ImageFormat.JPEG)
 
