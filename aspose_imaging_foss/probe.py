@@ -2,6 +2,8 @@ from os import PathLike
 from struct import unpack_from
 from typing import BinaryIO
 
+from . import _metadata
+from ._reader import HeaderReader, read_up_to
 from .model import ImageFormat, ImageInfo
 
 
@@ -14,22 +16,19 @@ _HEIC_BRANDS = {b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"hevm", b
 def _read_prefix(stream: BinaryIO) -> bytes:
     if stream.seekable():
         stream.seek(0)
-    prefix = bytearray()
-    while len(prefix) < _HEADER_SIZE:
-        part = stream.read(_HEADER_SIZE - len(prefix))
-        if not part:
-            break
-        prefix.extend(part)
-    return bytes(prefix)
+    return read_up_to(stream, _HEADER_SIZE)
+
+
+def _byte_view(source: bytes | bytearray | memoryview) -> memoryview:
+    view = memoryview(source)
+    if view.c_contiguous:
+        return view.cast("B")
+    return memoryview(view.tobytes())
 
 
 def _header(source: Source) -> bytes:
-    if isinstance(source, (bytes, bytearray)):
-        return bytes(source[:_HEADER_SIZE])
-    if isinstance(source, memoryview):
-        if source.c_contiguous:
-            return bytes(source.cast("B")[:_HEADER_SIZE])
-        return source.tobytes()[:_HEADER_SIZE]
+    if isinstance(source, (bytes, bytearray, memoryview)):
+        return bytes(_byte_view(source)[:_HEADER_SIZE])
     if isinstance(source, (str, PathLike)):
         with open(source, "rb") as stream:
             return _read_prefix(stream)
@@ -93,17 +92,32 @@ def detect_format(source: Source) -> ImageFormat:
     return _identify(_header(source))
 
 
-def _emf_dimension(first: int, last: int) -> int | None:
-    size = last - first + 1  # Both coordinates belong to the device-space rectangle.
-    return size if 0 < size <= 0x7fff_ffff else None
+_FIXED_HEADERS = {
+    ImageFormat.BMP: _metadata.bmp,
+    ImageFormat.PSD: _metadata.psd,
+    ImageFormat.EMF: _metadata.emf,
+    ImageFormat.WMF: _metadata.wmf,
+}
+
+
+def _probe(buffered: memoryview, stream: BinaryIO | None = None) -> ImageInfo:
+    header = bytes(buffered[:_HEADER_SIZE])
+    image_format = _identify(header)
+    if image_format == ImageFormat.PNG:
+        return _metadata.png(HeaderReader(buffered, stream))
+    if image_format == ImageFormat.JPEG:
+        return _metadata.jpeg(HeaderReader(buffered, stream))
+    handler = _FIXED_HEADERS.get(image_format)
+    if handler is not None:
+        return handler(header)
+    return ImageInfo(image_format)
 
 
 def probe(source: Source) -> ImageInfo:
-    """Identify the format and read metadata currently supported for EMF."""
-    header = _header(source)
-    image_format = _identify(header)
-    if image_format == ImageFormat.EMF:
-        left, top, right, bottom = unpack_from("<4i", header, 8)
-        return ImageInfo(image_format, _emf_dimension(left, right),
-                         _emf_dimension(top, bottom), frame_count=1)
-    return ImageInfo(image_format)
+    """Identify the image format and read its supported header metadata."""
+    if isinstance(source, (bytes, bytearray, memoryview)):
+        return _probe(_byte_view(source))
+    if isinstance(source, (str, PathLike)):
+        with open(source, "rb") as stream:
+            return _probe(memoryview(_read_prefix(stream)), stream)
+    return _probe(memoryview(_read_prefix(source)), source)
