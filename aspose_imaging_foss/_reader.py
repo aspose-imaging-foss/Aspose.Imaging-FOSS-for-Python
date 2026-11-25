@@ -55,7 +55,7 @@ class HeaderReader:
 
 
 class OffsetReader:
-    """Read TIFF directory entries or DjVu chunks by absolute file offset."""
+    """Read container metadata by absolute file offset."""
 
     def __init__(self, buffered: memoryview, stream: BinaryIO | None):
         self._buffered = buffered

@@ -3,7 +3,9 @@ from struct import unpack_from
 from typing import BinaryIO
 
 from . import _animation, _metadata
+from ._dicom import dicom
 from ._djvu import djvu
+from ._heif import heif
 from ._tiff import tiff
 from ._reader import HeaderReader, offset_reader, read_up_to
 from .model import ImageFormat, ImageInfo
@@ -107,6 +109,7 @@ _SEQUENTIAL_HEADERS = {
     ImageFormat.PNG: _metadata.png,
     ImageFormat.JPEG: _metadata.jpeg,
     ImageFormat.GIF: _animation.gif,
+    ImageFormat.DICOM: dicom,
     ImageFormat.WEBP: _animation.webp,
 }
 
@@ -119,6 +122,9 @@ def _probe(buffered: memoryview, stream: BinaryIO | None = None) -> ImageInfo:
     sequential = _SEQUENTIAL_HEADERS.get(image_format)
     if sequential is not None:
         return sequential(HeaderReader(buffered, stream))
+    if image_format in (ImageFormat.AVIF, ImageFormat.HEIC):
+        with offset_reader(buffered, stream) as reader:
+            return heif(reader, image_format)
     by_offset = _OFFSET_HEADERS.get(image_format)
     if by_offset is not None:
         with offset_reader(buffered, stream) as reader:
