@@ -2,8 +2,10 @@ from os import PathLike
 from struct import unpack_from
 from typing import BinaryIO
 
-from . import _metadata
-from ._reader import HeaderReader, read_up_to
+from . import _animation, _metadata
+from ._djvu import djvu
+from ._tiff import tiff
+from ._reader import HeaderReader, offset_reader, read_up_to
 from .model import ImageFormat, ImageInfo
 
 
@@ -94,19 +96,33 @@ def detect_format(source: Source) -> ImageFormat:
 
 _FIXED_HEADERS = {
     ImageFormat.BMP: _metadata.bmp,
+    ImageFormat.ICO: _metadata.ico,
     ImageFormat.PSD: _metadata.psd,
     ImageFormat.EMF: _metadata.emf,
     ImageFormat.WMF: _metadata.wmf,
 }
 
 
+_SEQUENTIAL_HEADERS = {
+    ImageFormat.PNG: _metadata.png,
+    ImageFormat.JPEG: _metadata.jpeg,
+    ImageFormat.GIF: _animation.gif,
+    ImageFormat.WEBP: _animation.webp,
+}
+
+_OFFSET_HEADERS = {ImageFormat.TIFF: tiff, ImageFormat.DJVU: djvu}
+
+
 def _probe(buffered: memoryview, stream: BinaryIO | None = None) -> ImageInfo:
     header = bytes(buffered[:_HEADER_SIZE])
     image_format = _identify(header)
-    if image_format == ImageFormat.PNG:
-        return _metadata.png(HeaderReader(buffered, stream))
-    if image_format == ImageFormat.JPEG:
-        return _metadata.jpeg(HeaderReader(buffered, stream))
+    sequential = _SEQUENTIAL_HEADERS.get(image_format)
+    if sequential is not None:
+        return sequential(HeaderReader(buffered, stream))
+    by_offset = _OFFSET_HEADERS.get(image_format)
+    if by_offset is not None:
+        with offset_reader(buffered, stream) as reader:
+            return by_offset(reader)
     handler = _FIXED_HEADERS.get(image_format)
     if handler is not None:
         return handler(header)

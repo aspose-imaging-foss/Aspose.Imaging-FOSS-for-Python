@@ -106,3 +106,12 @@ def jpeg(reader: HeaderReader) -> ImageInfo:
         if not reader.skip(size - 2):
             break
     return ImageInfo(ImageFormat.JPEG)
+
+
+def ico(header: bytes) -> ImageInfo:
+    if len(header) < 14:
+        return ImageInfo(ImageFormat.ICO)
+    count, width, height, depth = unpack_from("<HBB4xH", header, 4)
+    if count == 0:
+        return ImageInfo(ImageFormat.ICO)
+    return ImageInfo(ImageFormat.ICO, width or 256, height or 256, depth or None, count)

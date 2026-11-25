@@ -1,5 +1,8 @@
+from contextlib import contextmanager
 from io import SEEK_END
-from typing import BinaryIO
+from shutil import copyfileobj
+from tempfile import SpooledTemporaryFile
+from typing import BinaryIO, Iterator
 
 
 def read_up_to(stream: BinaryIO, size: int) -> bytes:
@@ -49,3 +52,32 @@ class HeaderReader:
                 return False
             remaining -= len(chunk)
         return True
+
+
+class OffsetReader:
+    """Read TIFF directory entries or DjVu chunks by absolute file offset."""
+
+    def __init__(self, buffered: memoryview, stream: BinaryIO | None):
+        self._buffered = buffered
+        self._stream = stream
+        self.length = len(buffered) if stream is None else stream.seek(0, SEEK_END)
+
+    def read_at(self, offset: int, size: int) -> bytes:
+        if offset >= self.length:
+            return b""
+        if self._stream is None or offset + size <= len(self._buffered):
+            return bytes(self._buffered[offset:offset + size])
+        self._stream.seek(offset)
+        return read_up_to(self._stream, size)
+
+
+@contextmanager
+def offset_reader(buffered: memoryview, stream: BinaryIO | None) -> Iterator[OffsetReader]:
+    if stream is None or stream.seekable():
+        yield OffsetReader(buffered, stream)
+        return
+    # Preserve offsets relative to the start of this image on a forward-only stream.
+    with SpooledTemporaryFile(max_size=1024 * 1024, mode="w+b") as spool:
+        spool.write(buffered)
+        copyfileobj(stream, spool)
+        yield OffsetReader(buffered, spool)
